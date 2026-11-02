@@ -32,6 +32,14 @@ RU = {
     "BlendKit material on an Ucupaint object becomes a layer": "Материал BlendKit на объект с Ucupaint — слоем",
     "Clicking or dragging a BlendKit material onto a slot with Ucupaint adds a layer instead of replacing the material":
         "Щелчок или перетаскивание материала BlendKit на слот с Ucupaint добавляет слой, а не заменяет материал",
+    "Textures": "Текстуры",
+    "Seamless (box projection)": "Без швов (проекция с 6 сторон)",
+    "Object's UV map": "По UV объекта",
+    "Project the material's textures onto the object from 6 sides, like BlendKit's automap: no seams between UV islands and the same texture scale everywhere. Baked into the object's own UV map":
+        "Спроецировать текстуры материала на объект с 6 сторон, как automap в BlendKit: без швов между островами UV "
+        "и с одинаковым масштабом везде. Запекается в собственную UV объекта",
+    "Use the material's own mapping on the object's UV map: textures can break at UV seams and island edges":
+        "Наложить материал по UV объекта, как он настроен: на швах и краях островов UV текстура может рваться",
     "Ucupaint is not enabled": "Ucupaint не включён",
     "BlendKit is not enabled": "BlendKit не включён",
     # reports

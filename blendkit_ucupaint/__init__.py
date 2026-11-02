@@ -82,6 +82,13 @@ MODE_ITEMS = [
     ('DIRECT', "Images as is",
      "Use the material's image files without baking: tiles, but procedural parts and mixing are lost"),
 ]
+PROJ_ITEMS = [
+    ('BOX', "Seamless (box projection)",
+     "Project the material's textures onto the object from 6 sides, like BlendKit's automap: no seams between UV "
+     "islands and the same texture scale everywhere. Baked into the object's own UV map"),
+    ('UV', "Object's UV map",
+     "Use the material's own mapping on the object's UV map: textures can break at UV seams and island edges"),
+]
 SIZE_ITEMS = [('512', "512", ""), ('1024', "1024", ""), ('2048', "2048", ""), ('4096', "4096", "")]
 
 
@@ -90,6 +97,7 @@ class BK2UCP_Prefs(bpy.types.AddonPreferences):
 
     mode: bpy.props.EnumProperty(name="Method", default='BAKE', items=MODE_ITEMS)
     size: bpy.props.EnumProperty(name="Size", default='1024', items=SIZE_ITEMS)
+    projection: bpy.props.EnumProperty(name="Textures", default='BOX', items=PROJ_ITEMS)
     folder: bpy.props.StringProperty(name="Folder", subtype='DIR_PATH', default="//textures/blendkit/",
                                      options={'PATH_SUPPORTS_BLEND_RELATIVE'},
                                      description="Where baked textures are saved (// means next to the .blend file)")
@@ -101,6 +109,7 @@ class BK2UCP_Prefs(bpy.types.AddonPreferences):
         l = self.layout
         l.prop(self, "mode")
         l.prop(self, "size")
+        l.prop(self, "projection")
         l.prop(self, "folder")
         l.prop(self, "auto")
         if _ucupaint_menu() is None:
@@ -117,8 +126,43 @@ def prefs():
 #  Baking a material to maps on the object's UVs
 # ---------------------------------------------------------------------------------
 
-def bake_material(ctx, ob, src, size, folder):
-    """Bake src on the UVs of ob: color, roughness, metallic, normal (+ height if any). Returns file names."""
+def texture_size_meters(mat):
+    """How many meters one texture repeat covers, as BlendKit stores it for the material (default 1)."""
+    try:
+        v = float(mat.blenderkit.texture_size_meters)
+    except Exception:  # noqa: BLE001
+        v = float((mat.get("blenderkit") or {}).get("texture_size_meters", 1.0) or 1.0)
+    return v if v > 0 else 1.0
+
+
+def project_box(nt, ob, src):
+    """In a (temporary) material: feed every UV-driven texture with object coordinates and box projection, the way
+    BlendKit's automap maps a material (UV = size in meters / texture_size_meters). No seams between UV islands."""
+    k = sum(ob.scale) / 3.0 / texture_size_meters(src)
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    mul = nt.nodes.new('ShaderNodeVectorMath')
+    mul.operation = 'SCALE'
+    mul.inputs['Scale'].default_value = k
+    nt.links.new(tc.outputs['Object'], mul.inputs[0])
+    proj = mul.outputs['Vector']
+    for n in list(nt.nodes):
+        if n is tc:
+            continue
+        if n.type == 'TEX_COORD':
+            for l in list(n.outputs['UV'].links):
+                nt.links.new(proj, l.to_socket)
+        elif n.type == 'UVMAP':
+            for l in list(n.outputs['UV'].links):
+                nt.links.new(proj, l.to_socket)
+        elif n.type == 'TEX_IMAGE':
+            n.projection = 'BOX'
+            n.projection_blend = 0.25
+            if not n.inputs['Vector'].is_linked:  # an unlinked image vector means "the active UV map"
+                nt.links.new(proj, n.inputs['Vector'])
+
+
+def bake_material(ctx, ob, src, size, folder, uv=None, projection='UV'):
+    """Bake src on the UVs of ob (uv: UV map name, default active): color, roughness, metallic, normal (+ height). Returns file names."""
     scene = ctx.scene
     prev = (scene.render.engine, scene.cycles.samples, scene.cycles.device)
     slots = [(s, s.link, s.material) for s in ob.material_slots]
@@ -127,6 +171,8 @@ def bake_material(ctx, ob, src, size, folder):
     vis = [(ob, ob.hide_render, ob.hide_viewport)] + [(c, c.hide_render, c.hide_viewport) for c in bpy.data.collections
                                                       if (c.hide_render or c.hide_viewport) and ob.name in c.all_objects]
     active = ctx.view_layer.objects.active
+    uvs = ob.data.uv_layers
+    prev_uv = uvs.active.name if uvs.active else None
     tmp = src.copy()
     tmp.name = "__bk2ucp_bake"
     imgs, files = [], []
@@ -139,6 +185,8 @@ def bake_material(ctx, ob, src, size, folder):
             d.hide_render = False
             d.hide_viewport = False
         ob.hide_set(False)
+        if uv and uv in uvs:
+            uvs.active = uvs[uv]  # Cycles bakes into the active UV map
         for s in ob.material_slots:  # every face gets the temp material (other slots would have no image to bake into)
             s.link = 'OBJECT'
             s.material = tmp
@@ -152,6 +200,8 @@ def bake_material(ctx, ob, src, size, folder):
         bsdf = next((n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED'), None)
         if out is None or bsdf is None:
             raise RuntimeError(rpt_("the material has no Principled BSDF, nothing to bake"))
+        if projection == 'BOX':
+            project_box(nt, ob, src)
         disp = next((l.from_node for l in out.inputs['Displacement'].links), None)
         height = disp.inputs.get('Height') if disp is not None and disp.type == 'DISPLACEMENT' else None
         emis = nt.nodes.new('ShaderNodeEmission')
@@ -201,10 +251,29 @@ def bake_material(ctx, ob, src, size, folder):
         scene.render.engine, scene.cycles.samples, scene.cycles.device = prev
         for d, r, v in vis:
             d.hide_render, d.hide_viewport = r, v
+        if prev_uv and prev_uv in uvs:
+            uvs.active = uvs[prev_uv]
         ob.hide_set(hidden)
         for o in ctx.view_layer.objects:
             o.select_set(o in sel)
         ctx.view_layer.objects.active = active
+
+
+AUTOMAP_UV = "automap"  # the cube-projection UV map BlendKit creates when "automap" is on in its preferences
+
+
+def pick_uv(ob):
+    """The object's own UV map: the active one, but never BlendKit's "automap" if the object has another."""
+    uvs = ob.data.uv_layers
+    if not len(uvs):
+        return ""
+    names = [u.name for u in uvs]
+    own = [n for n in names if n != AUTOMAP_UV]
+    act = uvs.active.name if uvs.active else names[0]
+    if act != AUTOMAP_UV:
+        return act
+    render = next((u.name for u in uvs if u.active_render and u.name != AUTOMAP_UV), None)
+    return render or (own[0] if own else act)
 
 
 def add_as_layer(ctx, ob, slot_index, ucp_mat, src, st=None):
@@ -214,7 +283,7 @@ def add_as_layer(ctx, ob, slot_index, ucp_mat, src, st=None):
     yp = node.node_tree.yp
     ob.active_material_index = slot_index
     ucp_mat.node_tree.nodes.active = node
-    uv = ob.data.uv_layers.active.name if ob.data.uv_layers.active else (ob.data.uv_layers[0].name if ob.data.uv_layers else "")
+    uv = pick_uv(ob)
     if not uv:
         raise RuntimeError(rpt_("the object has no UV map"))
     n_before = len(yp.layers)
@@ -222,7 +291,7 @@ def add_as_layer(ctx, ob, slot_index, ucp_mat, src, st=None):
         if st.mode == 'BAKE':
             folder = bpy.path.abspath(st.folder)
             os.makedirs(folder, exist_ok=True)
-            files = bake_material(ctx, ob, src, int(st.size), folder)
+            files = bake_material(ctx, ob, src, int(st.size), folder, uv, st.projection)
             ob.active_material_index = slot_index
             ucp_mat.node_tree.nodes.active = node
             bpy.ops.wm.y_open_images_as_single_layer(directory=folder if folder.endswith(("/", "\\")) else folder + os.sep,
@@ -249,6 +318,7 @@ def _settings_ui(layout, p):
     layout.prop(p, "mode", text="")
     if p.mode == 'BAKE':
         layout.prop(p, "size")
+        layout.prop(p, "projection", text="")
         layout.prop(p, "folder", text="")
 
 
@@ -295,6 +365,7 @@ class BK2UCP_OT_from_file(bpy.types.Operator):
 # ---------------------------------------------------------------------------------
 
 _orig_assign = None
+_orig_automap = None
 _wait = {}  # "From BlendKit" was used: object and Ucupaint slot to target even if another slot is active
 WAIT_SECONDS = 15 * 60
 _queue = []
@@ -351,6 +422,22 @@ def _assign_hook(object, material, target_slot, *args, **kwargs):  # noqa: A002 
 _assign_hook._bk2ucp = True
 
 
+def _automap_hook(target_object=None, target_slot=None, *args, **kwargs):
+    """BlendKit adds an "automap" UV (cube projection) before downloading a material. Not for Ucupaint slots:
+    the layer is baked onto the object's own UVs, and a new active UV map would break the other layers."""
+    try:
+        ob = bpy.data.objects.get(target_object) if target_object else None
+        on = prefs().auto or bool(_wait)
+        if on and ob is not None and _ucupaint_target(ob, target_slot if target_slot is not None else ob.active_material_index)[1]:
+            return None
+    except Exception as e:  # noqa: BLE001
+        print(LOG, e)
+    return _orig_automap(target_object, target_slot, *args, **kwargs)
+
+
+_automap_hook._bk2ucp = True
+
+
 def _process():
     while _queue:
         obn, i, ucpn, srcn = _queue.pop(0)
@@ -381,21 +468,35 @@ def _report(msg):
 
 def _keep_alive():
     """Install the hook and the menu item; retried, because BlendKit/Ucupaint may be enabled (or reloaded) later."""
-    global _orig_assign
+    global _orig_assign, _orig_automap
     m = _bk_module()
     if m is not None and not getattr(m.assign_material, "_bk2ucp", False):
         _orig_assign = m.assign_material
         m.assign_material = _assign_hook
+    u = _bk_utils()
+    if u is not None and not getattr(u.automap, "_bk2ucp", False):
+        _orig_automap = u.automap
+        u.automap = _automap_hook
     menu = _ucupaint_menu()
     if menu is not None and menu_draw not in getattr(menu.draw, "_draw_funcs", []):
         menu.append(menu_draw)
     return 2.0
 
 
+def _bk_utils():
+    m = _bk_module()
+    pkg = m.__name__.rsplit(".", 1)[0] if m else None
+    u = sys.modules.get(f"{pkg}.utils") if pkg else None
+    return u if u is not None and hasattr(u, "automap") else None
+
+
 def _hook_remove():
     m = _bk_module()
     if m is not None and getattr(m.assign_material, "_bk2ucp", False) and _orig_assign is not None:
         m.assign_material = _orig_assign
+    u = _bk_utils()
+    if u is not None and getattr(u.automap, "_bk2ucp", False) and _orig_automap is not None:
+        u.automap = _orig_automap
 
 
 class BK2UCP_OT_search(bpy.types.Operator):
