@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blendkit_ucupaint"
-version = "1.2.1"
+version = "1.2.4"
 name = "BlendKit to Ucupaint"
 tagline = "Add BlendKit materials as Ucupaint layers with one click"
 maintainer = "Danila"
