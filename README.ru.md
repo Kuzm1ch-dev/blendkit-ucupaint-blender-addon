@@ -21,7 +21,7 @@
 
 ## Установка
 
-1. Скачай `blendkit_ucupaint-X.Y.Z.zip` из релизов (или собери, см. ниже).
+1. Скачай `blendkit_ucupaint-X.Y.Z.zip` со страницы [Releases](../../releases/latest) (раздел Assets) (или собери, см. ниже).
 2. В Blender: **Edit → Preferences → Get Extensions**, справа вверху меню **⌄** → **Install from Disk…** и выбери zip.
    Можно и просто перетащить zip в окно Blender.
 3. Проверь, что Ucupaint и BlendKit включены.
@@ -71,6 +71,24 @@ python build.py --set 2.0.0     # задать точную версию и со
 Нужен Python 3.9+. Версия хранится в одном месте — `blendkit_ucupaint/blender_manifest.toml`. Изменения каждой
 версии описывай в [CHANGELOG.md](CHANGELOG.md). Тот же пакет собирает и сам Blender:
 `blender --command extension build --source-dir blendkit_ucupaint --output-dir dist`.
+
+## Выпуск версии
+
+Релизы собирает GitHub Actions (`.github/workflows/release.yml`):
+
+1. Подними версию: `python build.py --bump patch` (или `minor` / `major`) и опиши её в `CHANGELOG.md`
+   под заголовком `## X.Y.Z`.
+2. Закоммить, поставь тег и отправь:
+   ```
+   git commit -am "Release 1.2.2"
+   git tag v1.2.2
+   git push && git push --tags
+   ```
+3. GitHub соберёт `blendkit_ucupaint-1.2.2.zip` и выложит его на странице **Releases** с описанием из CHANGELOG.
+   Тег должен совпадать с версией в `blender_manifest.toml`, иначе сборка остановится с ошибкой.
+
+Пользователи качают zip в **Releases → Assets**. Последняя версия всегда по ссылке
+`https://github.com/<you>/blendkit-ucupaint/releases/latest`.
 
 ## Лицензия
 

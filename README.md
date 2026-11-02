@@ -21,7 +21,7 @@ Tested on Blender 5.1.
 
 ## Installation
 
-1. Download `blendkit_ucupaint-X.Y.Z.zip` from the releases (or build it, see below).
+1. Download `blendkit_ucupaint-X.Y.Z.zip` from the [Releases](../../releases/latest) page (Assets) (or build it, see below).
 2. In Blender: **Edit → Preferences → Get Extensions**, then the **⌄** menu at the top right → **Install from Disk…**,
    and pick the zip. Dragging the zip into the Blender window also works.
 3. Make sure Ucupaint and BlendKit are enabled.
@@ -83,7 +83,26 @@ blendkit_ucupaint/          the extension (what goes into the zip)
 build.py                    zip builder / version bump
 CHANGELOG.md
 LICENSE                     GPL-3.0-or-later
+.github/workflows/release.yml  builds and publishes the zip on tag push
 ```
+
+## Releasing
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`):
+
+1. Raise the version: `python build.py --bump patch` (or `minor` / `major`) and describe it in `CHANGELOG.md`
+   under `## X.Y.Z`.
+2. Commit, then tag and push:
+   ```
+   git commit -am "Release 1.2.2"
+   git tag v1.2.2
+   git push && git push --tags
+   ```
+3. GitHub builds `blendkit_ucupaint-1.2.2.zip` and publishes it on the **Releases** page with the changelog as
+   notes. The tag must match the version in `blender_manifest.toml`, otherwise the build fails.
+
+Users download the zip from **Releases → Assets**. The latest one is always at
+`https://github.com/<you>/blendkit-ucupaint/releases/latest`.
 
 ## License
 

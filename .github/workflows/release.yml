@@ -1,0 +1,48 @@
+# Push a tag vX.Y.Z -> GitHub builds dist/blendkit_ucupaint-X.Y.Z.zip and publishes it as a Release
+# (notes are taken from the "## X.Y.Z" section of CHANGELOG.md).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check tag matches manifest version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c "import tomllib;print(tomllib.load(open('blendkit_ucupaint/blender_manifest.toml','rb'))['version'])")
+          echo "tag=$TAG manifest=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::Tag v$TAG does not match version $VER in blender_manifest.toml"; exit 1
+          fi
+
+      - name: Build zip
+        run: python build.py
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          python - <<'PY'
+          import os, re
+          ver = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"^## {re.escape(ver)}\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+          notes = (m.group(1).strip() if m else "") + "\n\n**Install:** Blender → Edit → Preferences → Get Extensions → ⌄ → Install from Disk… → pick the zip."
+          open("notes.md", "w", encoding="utf-8").write(notes)
+          PY
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "BlendKit to Ucupaint $GITHUB_REF_NAME" --notes-file notes.md
